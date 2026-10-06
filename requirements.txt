@@ -1,0 +1,5 @@
+streamlit>=1.39
+anthropic>=0.40
+google-genai>=1.0
+qdrant-client>=1.12
+pandas>=2.0
