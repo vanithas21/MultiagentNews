@@ -1,0 +1,1505 @@
+{
+  "name": "Multi-Agent Daily News Intelligence (RAG) - RIVA",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1. Fetcher Agents (one per domain)\nEach agent has its own sources (RSS + NewsAPI) and its own relevance rules. Failed sources are retried 3x, then skipped so the run continues.",
+        "height": 1300,
+        "width": 1320,
+        "color": 5
+      },
+      "id": "afdebf46-e3ae-4ff4-b6e0-b94b9321c035",
+      "name": "Note 0",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Orchestration + Processing Agent\nDedupe across outlets, skip articles stored in earlier runs, then Claude (Haiku) cleans, verifies relevance, summarises, extracts entities and tags each article.",
+        "height": 760,
+        "width": 1220,
+        "color": 3
+      },
+      "id": "38cfe893-28fe-403e-967c-40221e99de79",
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1232,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Knowledge Base\n~400-token chunks, embedded with Gemini, stored in Qdrant collection `news_kb` with metadata: date, category, source, URL, entities.\nThen a run log row is written to Google Sheets.",
+        "height": 760,
+        "width": 1060,
+        "color": 4
+      },
+      "id": "d7485ca9-a704-446f-9394-0c55ab08d4da",
+      "name": "Note 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2464,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 4. Today's Briefing\nBuilt from today's processed articles and emailed each morning right after ingestion.",
+        "height": 420,
+        "width": 1060,
+        "color": 6
+      },
+      "id": "006da990-ba7b-41c5-b043-1c82f432fc61",
+      "name": "Note 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2464,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 5. RAG Chat Interface\nOpen the Chat Trigger → copy the public chat URL. The agent searches Qdrant, filters by date, answers only from retrieved news, cites sources, and says \"I don't have news on that\" when nothing is found.",
+        "height": 700,
+        "width": 1100,
+        "color": 7
+      },
+      "id": "494680eb-a85d-4200-83e4-731260101c2d",
+      "name": "Note 4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cbb7a7a2-e0f4-4a29-80b0-8af1e03dcfad",
+      "name": "Daily 6 AM Scheduler",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        64,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Edit this list to add/remove Technology RSS sources\nreturn [\n  { json: { category: 'Technology', name: 'TechCrunch', url: 'https://techcrunch.com/feed/' } },\n  { json: { category: 'Technology', name: 'The Verge', url: 'https://www.theverge.com/rss/index.xml' } },\n  { json: { category: 'Technology', name: 'Economic Times Tech', url: 'https://economictimes.indiatimes.com/tech/rssfeeds/13357270.cms' } },\n  { json: { category: 'Technology', name: 'Inc42', url: 'https://inc42.com/feed/' } },\n  { json: { category: 'Technology', name: 'The Hindu Technology', url: 'https://www.thehindu.com/sci-tech/technology/feeder/default.rss' } }\n];"
+      },
+      "id": "d21d4f78-3426-4009-a764-5b556e0fc77a",
+      "name": "Tech Agent - Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "ignoreSSL": true
+        }
+      },
+      "id": "9a81f6d7-e1e3-4613-b1cd-baa4b1dd0317",
+      "name": "Tech Agent - Read RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "\"artificial intelligence\" OR AI OR startup OR semiconductor OR cybersecurity OR \"big tech\""
+            },
+            {
+              "name": "searchIn",
+              "value": "title,description"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "sortBy",
+              "value": "publishedAt"
+            },
+            {
+              "name": "pageSize",
+              "value": "30"
+            },
+            {
+              "name": "from",
+              "value": "={{ $now.minus({ days: 2 }).toISODate() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "008f282f-7cac-45bb-82b0-f28ff0ce0649",
+      "name": "Tech Agent - NewsAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        352
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "MOdo13cU800H5J82",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Edit this list to add/remove Finance RSS sources\nreturn [\n  { json: { category: 'Finance', name: 'RBI Press Releases', url: 'https://www.rbi.org.in/pressreleases_rss.xml' } },\n  { json: { category: 'Finance', name: 'SEBI', url: 'https://www.sebi.gov.in/sebirss.xml' } },\n  { json: { category: 'Finance', name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms' } },\n  { json: { category: 'Finance', name: 'Moneycontrol Business', url: 'https://www.moneycontrol.com/rss/business.xml' } },\n  { json: { category: 'Finance', name: 'Mint Markets', url: 'https://www.livemint.com/rss/markets' } },\n  { json: { category: 'Finance', name: 'The Hindu Business', url: 'https://www.thehindu.com/business/feeder/default.rss' } }\n];"
+      },
+      "id": "2edf8249-e323-4aa0-80ff-9fc359dc6e10",
+      "name": "Finance Agent - Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "ignoreSSL": true
+        }
+      },
+      "id": "0e1cec43-dae3-47f4-a50a-a67ca42d6994",
+      "name": "Finance Agent - Read RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "RBI OR SEBI OR Sensex OR Nifty OR \"repo rate\" OR inflation OR earnings OR IPO"
+            },
+            {
+              "name": "searchIn",
+              "value": "title,description"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "sortBy",
+              "value": "publishedAt"
+            },
+            {
+              "name": "pageSize",
+              "value": "30"
+            },
+            {
+              "name": "from",
+              "value": "={{ $now.minus({ days: 2 }).toISODate() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cbf548ef-422a-4924-a480-d4011d807b72",
+      "name": "Finance Agent - NewsAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        752
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "MOdo13cU800H5J82",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Edit this list to add/remove Politics RSS sources\nreturn [\n  { json: { category: 'Politics', name: 'PIB', url: 'https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3' } },\n  { json: { category: 'Politics', name: 'The Hindu National', url: 'https://www.thehindu.com/news/national/feeder/default.rss' } },\n  { json: { category: 'Politics', name: 'Indian Express India', url: 'https://indianexpress.com/section/india/feed/' } },\n  { json: { category: 'Politics', name: 'The Hindu International', url: 'https://www.thehindu.com/news/international/feeder/default.rss' } },\n  { json: { category: 'Politics', name: 'Mint Politics', url: 'https://www.livemint.com/rss/politics' } }\n];"
+      },
+      "id": "e66c915b-a6c3-43aa-a0fd-73eed4d1a0f5",
+      "name": "Politics Agent - Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "ignoreSSL": true
+        }
+      },
+      "id": "f18bf562-bfc5-4930-af17-8ecd6be1ddfa",
+      "name": "Politics Agent - Read RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [
+        560,
+        960
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "India AND (Parliament OR election OR \"Supreme Court\" OR minister OR \"foreign policy\")"
+            },
+            {
+              "name": "searchIn",
+              "value": "title,description"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "sortBy",
+              "value": "publishedAt"
+            },
+            {
+              "name": "pageSize",
+              "value": "30"
+            },
+            {
+              "name": "from",
+              "value": "={{ $now.minus({ days: 2 }).toISODate() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "23245fed-940c-4c5c-b2d2-a00a62b68f10",
+      "name": "Politics Agent - NewsAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        1152
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "MOdo13cU800H5J82",
+          "name": "Unnamed credential"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "public": true,
+        "initialMessages": "Hi! I'm your Daily News Analyst.\nAsk me about Technology, Finance or Politics news, e.g. \"What did the RBI announce this week and how did markets react?\"\nTip: add filters in words, like \"finance only, last 3 days\".",
+        "options": {
+          "inputPlaceholder": "Ask about today's news...",
+          "subtitle": "Technology • Finance • Politics, answers grounded in collected news",
+          "title": "Daily News Intelligence"
+        }
+      },
+      "id": "a4c8ad2b-636f-42af-9b90-b5ddf67a21e9",
+      "name": "News Chat (public web chat)",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        64,
+        1760
+      ],
+      "webhookId": "c3f21544-10ba-4f41-b839-00220ba3cae8"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "=You are a personal news analyst. Today is {{ $now.setZone('Asia/Kolkata').toFormat('cccc, dd LLLL yyyy') }} (IST).\n\nYour ONLY knowledge source is the tool \"news_knowledge_base\". It holds news articles collected daily in three categories: Technology, Finance and Politics (India-focused). Every result shows Headline, Category, Source, Published date and URL.\n\nHow to answer:\n1. Interpret the question: identify the topic, the category (one or several) and the time range. Convert relative dates using today's date (\"today\", \"yesterday\", \"this week\" = Monday of this week to today, \"last 7 days\", \"this month\"). If no time range is given, use the last 7 days and say so.\n2. ALWAYS call news_knowledge_base before answering. Write specific queries with entity names and topic words, e.g. \"RBI repo rate monetary policy announcement\", then \"Sensex Nifty market reaction RBI policy\". For multi-part questions, search once per part. Up to 4 searches.\n3. Filter the results yourself: drop any result whose Published date is outside the time range or that does not address the question. When several results cover the same event, prefer the most recent and the most authoritative source (official sites such as RBI, SEBI and PIB first).\n4. Answer ONLY with facts stated in the retrieved results. Never add facts, figures or dates from your own background knowledge. If sources disagree, say so and show both.\n5. Cite every factual claim with a number like [1], and end with a \"Sources\" list in this format: [n] Headline - Source, DD Mon YYYY - URL. Cite only results you actually used.\n6. If nothing relevant is found for the requested time range, reply: \"I don't have news on that in my knowledge base for <time range>.\" You may then mention the closest related item you found, clearly labelled with its date. Never guess.\n7. If the user sets a filter in words (\"finance only\", \"last 3 days\"), keep applying it until they change it.\n\nStyle: open with a 1-2 sentence direct answer, then short bullet points grouped by theme, then Sources. State dates explicitly (\"On 2 Oct, the RBI...\"). Keep it under 300 words unless asked for more.",
+          "maxIterations": 8
+        }
+      },
+      "id": "40d38d3b-b46c-4f5e-82de-d80b0611d48f",
+      "name": "RAG Query Engine (AI Agent)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        464,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 2048
+        }
+      },
+      "id": "4ade66a3-24cd-4300-b0f1-b322754d10ee",
+      "name": "Claude Sonnet - Chat",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        320,
+        2000
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 10
+      },
+      "id": "a937bc79-3c4e-4d3b-8cf0-6fdf3201cd6b",
+      "name": "Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        512,
+        2000
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "news_knowledge_base",
+        "toolDescription": "Search the daily news knowledge base (Technology, Finance, Politics; India-focused). Returns article chunks with headline, category, source, published date and URL. Use specific queries containing entity names and topic words.",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "news_kb",
+          "mode": "id"
+        },
+        "topK": 12,
+        "options": {}
+      },
+      "id": "93e4dec3-0107-430a-aead-6564eb957fcc",
+      "name": "news_knowledge_base (Qdrant)",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.1,
+      "position": [
+        704,
+        2000
+      ],
+      "credentials": {
+        "qdrantApi": {
+          "id": "bQrUFyAibH31hBEd",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "46f76daf-257d-4b00-b493-d098d79eecd0",
+      "name": "Gemini Embeddings (query)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        768,
+        2192
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "l5JyEc5qLeb5AjCh",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "f79d0f48-1cba-4f6d-b6c1-d39c0c5924c3",
+      "name": "Tech Agent - Combine",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        832,
+        240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "3c47744e-2dce-4899-9445-32e548069c0d",
+      "name": "Finance Agent - Combine",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        832,
+        640
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "32111f2c-7ca0-4f21-a661-f5ada6eb24fd",
+      "name": "Politics Agent - Combine",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        832,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const HOST_NAMES = {\n  'techcrunch.com':'TechCrunch','theverge.com':'The Verge','economictimes.indiatimes.com':'Economic Times',\n  'inc42.com':'Inc42','thehindu.com':'The Hindu','rbi.org.in':'Reserve Bank of India','sebi.gov.in':'SEBI',\n  'moneycontrol.com':'Moneycontrol','livemint.com':'Mint','pib.gov.in':'PIB (Govt of India)','indianexpress.com':'Indian Express'\n};\nconst hostOf = u => { try { return new URL(u).hostname.replace(/^www\\./,''); } catch (e) { return ''; } };\nconst sourceName = u => { const h = hostOf(u); const k = Object.keys(HOST_NAMES).find(x => h.endsWith(x)); return k ? HOST_NAMES[k] : (h || 'Unknown'); };\n\nconst CATEGORY = 'Technology';\nconst INCLUDE = null;      // null = keep everything not excluded\nconst EXCLUDE = /(deal of the day|discount|coupon|\\d+% off|buying guide|best [a-z ]{0,30}(to buy|under rs)|horoscope|recipe|wordle|crossword|giveaway)/i;\nconst OFFICIAL = /rbi\\.org\\.in|sebi\\.gov\\.in|pib\\.gov\\.in/i;   // official sources always pass\nconst MAX_AGE_HOURS = 48;\n\nconst strip = s => String(s || '')\n  .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n  .replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/&#39;|&rsquo;|&lsquo;/g, \"'\").replace(/&quot;|&ldquo;|&rdquo;/g, '\"')\n  .replace(/\\[\\+\\d+ chars\\]/g, '').replace(/\\s+/g, ' ').trim();\n\nconst raw = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  if (Array.isArray(j.articles)) {                       // NewsAPI response\n    for (const a of j.articles) {\n      if (!a.title || a.title === '[Removed]') continue;\n      raw.push({ headline: strip(a.title), body: strip([a.description, a.content].filter(Boolean).join(' ')),\n                 url: a.url, published: a.publishedAt, source: (a.source && a.source.name) || sourceName(a.url), fetched_via: 'newsapi' });\n    }\n  } else if (j.title && (j.link || j.guid)) {           // RSS item\n    const url = j.link || j.guid;\n    raw.push({ headline: strip(j.title), body: strip(j['content:encoded'] || j.content || j.contentSnippet || j.summary || ''),\n               url, published: j.isoDate || j.pubDate, source: sourceName(url), fetched_via: 'rss' });\n  }\n}\n\nconst now = Date.now();\nconst out = [];\nfor (const a of raw) {\n  const ts = Date.parse(a.published);\n  if (!isNaN(ts) && now - ts > MAX_AGE_HOURS * 3600 * 1000) continue;\n  const text = a.headline + ' ' + a.body;\n  if (EXCLUDE && EXCLUDE.test(text)) continue;\n  if (INCLUDE && !OFFICIAL.test(a.url) && !INCLUDE.test(text)) continue;\n  out.push({ json: { ...a, category: CATEGORY, published: new Date(isNaN(ts) ? now : ts).toISOString() } });\n}\nreturn out;\n"
+      },
+      "id": "c30eeb3a-9c33-4580-81f7-b39a57eac1c1",
+      "name": "Tech Agent - Normalise & Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        240
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "d843614f-c3f3-4dbb-8fd9-d49c49e1bb5f",
+      "name": "Merge All Domains",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1280,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const HOST_NAMES = {\n  'techcrunch.com':'TechCrunch','theverge.com':'The Verge','economictimes.indiatimes.com':'Economic Times',\n  'inc42.com':'Inc42','thehindu.com':'The Hindu','rbi.org.in':'Reserve Bank of India','sebi.gov.in':'SEBI',\n  'moneycontrol.com':'Moneycontrol','livemint.com':'Mint','pib.gov.in':'PIB (Govt of India)','indianexpress.com':'Indian Express'\n};\nconst hostOf = u => { try { return new URL(u).hostname.replace(/^www\\./,''); } catch (e) { return ''; } };\nconst sourceName = u => { const h = hostOf(u); const k = Object.keys(HOST_NAMES).find(x => h.endsWith(x)); return k ? HOST_NAMES[k] : (h || 'Unknown'); };\n\nconst CATEGORY = 'Finance';\nconst INCLUDE = /(rbi|sebi|sensex|nifty|market|stock|shares|repo|rate cut|rate hike|inflation|cpi|gdp|bank|earnings|profit|revenue|quarter|q[1-4]|ipo|merger|acquisition|rupee|bond|yield|crude|gold|fii|fpi|budget|tax|gst|fiscal|economy|investment)/i;      // null = keep everything not excluded\nconst EXCLUDE = /(horoscope|recipe|lifestyle|celebrity|travel tips|sponsored|brand stories|wedding|fashion|how to save)/i;\nconst OFFICIAL = /rbi\\.org\\.in|sebi\\.gov\\.in|pib\\.gov\\.in/i;   // official sources always pass\nconst MAX_AGE_HOURS = 48;\n\nconst strip = s => String(s || '')\n  .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n  .replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/&#39;|&rsquo;|&lsquo;/g, \"'\").replace(/&quot;|&ldquo;|&rdquo;/g, '\"')\n  .replace(/\\[\\+\\d+ chars\\]/g, '').replace(/\\s+/g, ' ').trim();\n\nconst raw = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  if (Array.isArray(j.articles)) {                       // NewsAPI response\n    for (const a of j.articles) {\n      if (!a.title || a.title === '[Removed]') continue;\n      raw.push({ headline: strip(a.title), body: strip([a.description, a.content].filter(Boolean).join(' ')),\n                 url: a.url, published: a.publishedAt, source: (a.source && a.source.name) || sourceName(a.url), fetched_via: 'newsapi' });\n    }\n  } else if (j.title && (j.link || j.guid)) {           // RSS item\n    const url = j.link || j.guid;\n    raw.push({ headline: strip(j.title), body: strip(j['content:encoded'] || j.content || j.contentSnippet || j.summary || ''),\n               url, published: j.isoDate || j.pubDate, source: sourceName(url), fetched_via: 'rss' });\n  }\n}\n\nconst now = Date.now();\nconst out = [];\nfor (const a of raw) {\n  const ts = Date.parse(a.published);\n  if (!isNaN(ts) && now - ts > MAX_AGE_HOURS * 3600 * 1000) continue;\n  const text = a.headline + ' ' + a.body;\n  if (EXCLUDE && EXCLUDE.test(text)) continue;\n  if (INCLUDE && !OFFICIAL.test(a.url) && !INCLUDE.test(text)) continue;\n  out.push({ json: { ...a, category: CATEGORY, published: new Date(isNaN(ts) ? now : ts).toISOString() } });\n}\nreturn out;\n"
+      },
+      "id": "bacc5569-e018-42e9-a802-42a09f974b7c",
+      "name": "Finance Agent - Normalise & Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        640
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const HOST_NAMES = {\n  'techcrunch.com':'TechCrunch','theverge.com':'The Verge','economictimes.indiatimes.com':'Economic Times',\n  'inc42.com':'Inc42','thehindu.com':'The Hindu','rbi.org.in':'Reserve Bank of India','sebi.gov.in':'SEBI',\n  'moneycontrol.com':'Moneycontrol','livemint.com':'Mint','pib.gov.in':'PIB (Govt of India)','indianexpress.com':'Indian Express'\n};\nconst hostOf = u => { try { return new URL(u).hostname.replace(/^www\\./,''); } catch (e) { return ''; } };\nconst sourceName = u => { const h = hostOf(u); const k = Object.keys(HOST_NAMES).find(x => h.endsWith(x)); return k ? HOST_NAMES[k] : (h || 'Unknown'); };\n\nconst CATEGORY = 'Politics';\nconst INCLUDE = /(government|minister|ministry|parliament|lok sabha|rajya sabha|assembly|election|polls|bjp|congress|party|cabinet|policy|bill|supreme court|high court|governor|chief minister|prime minister|president|diplomat|bilateral|summit|treaty|defence|opposition)/i;      // null = keep everything not excluded\nconst EXCLUDE = /(cricket|ipl|bollywood|box office|movie|film review|recipe|horoscope|celebrity|fashion)/i;\nconst OFFICIAL = /rbi\\.org\\.in|sebi\\.gov\\.in|pib\\.gov\\.in/i;   // official sources always pass\nconst MAX_AGE_HOURS = 48;\n\nconst strip = s => String(s || '')\n  .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n  .replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n  .replace(/&#39;|&rsquo;|&lsquo;/g, \"'\").replace(/&quot;|&ldquo;|&rdquo;/g, '\"')\n  .replace(/\\[\\+\\d+ chars\\]/g, '').replace(/\\s+/g, ' ').trim();\n\nconst raw = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  if (Array.isArray(j.articles)) {                       // NewsAPI response\n    for (const a of j.articles) {\n      if (!a.title || a.title === '[Removed]') continue;\n      raw.push({ headline: strip(a.title), body: strip([a.description, a.content].filter(Boolean).join(' ')),\n                 url: a.url, published: a.publishedAt, source: (a.source && a.source.name) || sourceName(a.url), fetched_via: 'newsapi' });\n    }\n  } else if (j.title && (j.link || j.guid)) {           // RSS item\n    const url = j.link || j.guid;\n    raw.push({ headline: strip(j.title), body: strip(j['content:encoded'] || j.content || j.contentSnippet || j.summary || ''),\n               url, published: j.isoDate || j.pubDate, source: sourceName(url), fetched_via: 'rss' });\n  }\n}\n\nconst now = Date.now();\nconst out = [];\nfor (const a of raw) {\n  const ts = Date.parse(a.published);\n  if (!isNaN(ts) && now - ts > MAX_AGE_HOURS * 3600 * 1000) continue;\n  const text = a.headline + ' ' + a.body;\n  if (EXCLUDE && EXCLUDE.test(text)) continue;\n  if (INCLUDE && !OFFICIAL.test(a.url) && !INCLUDE.test(text)) continue;\n  out.push({ json: { ...a, category: CATEGORY, published: new Date(isNaN(ts) ? now : ts).toISOString() } });\n}\nreturn out;\n"
+      },
+      "id": "95011603-4276-494f-9234-b28bfeeca2eb",
+      "name": "Politics Agent - Normalise & Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        1040
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Same story often appears in many outlets: merge by URL and by near-identical headline.\nconst MAX_PER_CATEGORY = 15;\nconst norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\\s+/g, ' ').trim();\nconst words = s => new Set(norm(s).split(' ').filter(w => w.length > 3));\nconst jaccard = (a, b) => { let i = 0; for (const w of a) if (b.has(w)) i++; return i / ((a.size + b.size - i) || 1); };\nconst cleanUrl = u => { try { const x = new URL(u); x.hash = '';\n  ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','ref','ito'].forEach(p => x.searchParams.delete(p));\n  return x.toString(); } catch (e) { return u; } };\n\nconst items = $input.all().map(i => i.json).filter(j => j && j.headline && j.url);\nitems.sort((a, b) => (b.body || '').length - (a.body || '').length);   // keep the richest version\n\nconst kept = [], seen = new Set();\nfor (const a of items) {\n  a.url = cleanUrl(a.url);\n  if (seen.has(a.url)) continue;\n  const w = words(a.headline);\n  const twin = kept.find(k => jaccard(k._w, w) >= 0.5);\n  if (twin) { if (!twin.also_reported_by.includes(a.source)) twin.also_reported_by.push(a.source); seen.add(a.url); continue; }\n  seen.add(a.url);\n  kept.push({ ...a, _w: w, also_reported_by: [] });\n}\n\nconst out = [];\nfor (const cat of ['Technology', 'Finance', 'Politics']) {\n  kept.filter(k => k.category === cat)\n      .sort((a, b) => (b.also_reported_by.length - a.also_reported_by.length) || (Date.parse(b.published) - Date.parse(a.published)))\n      .slice(0, MAX_PER_CATEGORY)\n      .forEach(k => { const { _w, ...rest } = k; out.push({ json: rest }); });\n}\nreturn out;\n"
+      },
+      "id": "a6b076b2-ed4a-40b1-af4e-c60a419760b2",
+      "name": "Dedupe & Rank",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "rowNotExists",
+        "dataTableId": {
+          "__rl": true,
+          "value": "mvTDMJ3qLKnN23it",
+          "mode": "list",
+          "cachedResultName": "stored_articles",
+          "cachedResultUrl": "/projects/w6ulYVG1DTcwZ4dl/datatables/mvTDMJ3qLKnN23it"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $json.url }} "
+            }
+          ]
+        }
+      },
+      "id": "374e7513-77d9-4bb8-844c-064c2d593db1",
+      "name": "Skip Already-Stored Articles",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1728,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are the Processing Agent in a news intelligence pipeline. Clean, verify relevance and tag ONE news article. Return ONLY valid JSON. No markdown fences, no commentary.\n\nDomain relevance rules:\n- Technology: keep AI, software, internet, telecom, semiconductors, startups and funding, cybersecurity, big-tech business, tech regulation. Drop gadget deals, shopping guides, game/app reviews, lifestyle.\n- Finance: keep markets, RBI/SEBI actions, policy rates, inflation, GDP, banking, earnings, IPOs, M&A, commodities, currency, budget and tax policy. Drop personal-finance tips, lifestyle, sponsored content.\n- Politics: keep government decisions, legislation, Parliament, elections, court rulings on public policy, diplomacy, defence policy. Drop celebrity, sport, and crime stories with no policy angle.\n\nArticle\nAssigned category: {{ $json.category }}\nHeadline: {{ $json.headline }}\nSource: {{ $json.source }}\nPublished: {{ $json.published }}\nURL: {{ $json.url }}\nBody: {{ String($json.body || '').slice(0, 6000) }}\n\nReturn JSON with exactly these keys:\n\"relevant\": true or false,\n\"category\": \"Technology\" or \"Finance\" or \"Politics\" (change it only if the article clearly belongs elsewhere),\n\"summary\": a 2-3 sentence factual summary using only the article text,\n\"key_facts\": array of up to 5 short factual statements (numbers, dates, decisions),\n\"entities\": object with arrays \"companies\", \"people\", \"organisations\", \"countries\",\n\"clean_text\": the article text with ads, navigation, bylines, 'read more' and subscription prompts removed. Do not add any facts. Max 300 words.\nIf the body is only a short snippet, clean_text may simply repeat the snippet.",
+        "batching": {
+          "batchSize": 10,
+          "delayBetweenBatches": 0
+        }
+      },
+      "id": "4c9cae7e-8634-406b-bed7-4e53981045c3",
+      "name": "Processing Agent (Claude)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1968,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-haiku-4-5-20251001"
+        },
+        "options": {
+          "maxTokensToSample": 1500,
+          "temperature": 0
+        }
+      },
+      "id": "e5428d88-759d-4c50-bb02-009d6058404c",
+      "name": "Claude Haiku - Processing",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1968,
+        784
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn the Processing Agent's JSON into a tagged article. Irrelevant articles are dropped here.\nconst out = [];\nconst inputs = $input.all();\nfor (let i = 0; i < inputs.length; i++) {\n  const src = $('Skip Already-Stored Articles').itemMatching(i).json;\n  const raw = String(inputs[i].json.text || '');\n  let p = null;\n  try { p = JSON.parse(raw.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim()); }\n  catch (e) { const m = raw.match(/\\{[\\s\\S]*\\}/); try { p = m ? JSON.parse(m[0]) : null; } catch (e2) { p = null; } }\n  if (!p) p = { relevant: true, category: src.category, summary: String(src.body || '').slice(0, 400), key_facts: [], entities: {}, clean_text: src.body, parse_failed: true };\n  if (p.relevant === false) continue;\n\n  const cats = ['Technology', 'Finance', 'Politics'];\n  const category = cats.includes(p.category) ? p.category : src.category;\n  const e = p.entities || {};\n  const entities = [...(e.companies || []), ...(e.organisations || []), ...(e.people || []), ...(e.countries || [])];\n  const d = new Date(src.published);\n  const istDate = new Date(d.getTime() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);\n\n  out.push({ json: {\n    headline: src.headline, url: src.url, source: src.source,\n    also_reported_by: (src.also_reported_by || []).join(', '),\n    published: src.published, published_date: istDate, published_ts: Math.floor(d.getTime() / 1000),\n    category, summary: p.summary || '', key_facts: Array.isArray(p.key_facts) ? p.key_facts : [],\n    entities: [...new Set(entities)].join(', '),\n    clean_text: p.clean_text || src.body || '', parse_failed: !!p.parse_failed\n  }});\n}\nreturn out;\n"
+      },
+      "id": "5827c4b2-03da-40e6-9a2e-b6ac5c6b77f6",
+      "name": "Parse & Tag Articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ~1600 characters ≈ 400 tokens. Every chunk carries its own header so citations and dates survive retrieval.\nconst TARGET = 1600, OVERLAP = 200;\nconst out = [];\nfor (const { json: a } of $input.all()) {\n  const header = `Headline: ${a.headline}\\nCategory: ${a.category} | Source: ${a.source} | Published: ${a.published_date} | URL: ${a.url}`\n               + (a.also_reported_by ? `\\nAlso reported by: ${a.also_reported_by}` : '')\n               + (a.entities ? `\\nEntities: ${a.entities}` : '');\n  const body = `Summary: ${a.summary}\\n` + (a.key_facts.length ? `Key facts: ${a.key_facts.join('; ')}\\n` : '') + a.clean_text;\n  const parts = body.match(/[^.!?\\n]+[.!?]*\\s*|\\n/g) || [body];\n  const chunks = []; let cur = '';\n  for (const s of parts) {\n    if ((cur + s).length > TARGET && cur.trim().length) {\n      chunks.push(cur.trim());\n      const tail = cur.slice(-OVERLAP); cur = tail.slice(tail.indexOf(' ') + 1) + s;\n    } else cur += s;\n  }\n  if (cur.trim()) chunks.push(cur.trim());\n  chunks.forEach((c, idx) => out.push({ json: {\n    content: `${header}\\n[Part ${idx + 1} of ${chunks.length}]\\n${c}`,\n    headline: a.headline, url: a.url, source: a.source, category: a.category,\n    published_date: a.published_date, published_ts: a.published_ts, entities: a.entities,\n    also_reported_by: a.also_reported_by, chunk_index: idx\n  }}));\n}\nreturn out;\n"
+      },
+      "id": "24f73fbd-771b-46a0-b5c9-d4fc4fbac67a",
+      "name": "Chunk Articles (~400 tokens)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "news_kb",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "19607aa8-7c27-4f0e-8627-1f0d06a9ecd8",
+      "name": "Store in Qdrant (news_kb)",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.1,
+      "position": [
+        2768,
+        464
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "qdrantApi": {
+          "id": "bQrUFyAibH31hBEd",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "6ba66faf-5741-491d-adc7-ca22a0948723",
+      "name": "Gemini Embeddings (store)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2704,
+        688
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "l5JyEc5qLeb5AjCh",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.content }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "category",
+                "value": "={{ $json.category }}"
+              },
+              {
+                "name": "source",
+                "value": "={{ $json.source }}"
+              },
+              {
+                "name": "url",
+                "value": "={{ $json.url }}"
+              },
+              {
+                "name": "headline",
+                "value": "={{ $json.headline }}"
+              },
+              {
+                "name": "published_date",
+                "value": "={{ $json.published_date }}"
+              },
+              {
+                "name": "published_ts",
+                "value": "={{ $json.published_ts }}"
+              },
+              {
+                "name": "entities",
+                "value": "={{ $json.entities }}"
+              },
+              {
+                "name": "also_reported_by",
+                "value": "={{ $json.also_reported_by }}"
+              },
+              {
+                "name": "chunk_index",
+                "value": "={{ $json.chunk_index }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "178fa636-4fab-4d35-a572-5321bb58dbec",
+      "name": "Document Loader + Metadata",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2880,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 3000,
+        "options": {}
+      },
+      "id": "4f73d5e2-a52a-4e69-aa5a-77d89a6cbcdb",
+      "name": "Keep Chunks Whole",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        2960,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One summary row per run for the Google Sheet \"RunLog\"\nconst safe = (n, f) => { try { return f($(n).all()); } catch (e) { return f([]); } };\nconst count = n => safe(n, a => a.filter(i => i.json && i.json.headline).length);\nconst parsed = safe('Parse & Tag Articles', a => a.map(i => i.json));\nconst byCat = c => parsed.filter(p => p.category === c).length;\nconst errors = [];\nfor (const k of ['Tech', 'Finance', 'Politics'])\n  for (const n of [`${k} Agent - Read RSS`, `${k} Agent - NewsAPI`])\n    safe(n, a => a.forEach(i => { if (i.json && i.json.error) errors.push(`${n}: ${i.json.error.message || i.json.error}`); }));\nsafe('Processing Agent (Claude)', a => a.forEach(i => { if (i.json && i.json.error) errors.push('Processing: ' + (i.json.error.message || i.json.error)); }));\n\nreturn [{ json: {\n  run_at: $now.setZone('Asia/Kolkata').toFormat('yyyy-LL-dd HH:mm'),\n  tech_fetched: count('Tech Agent - Normalise & Filter'),\n  finance_fetched: count('Finance Agent - Normalise & Filter'),\n  politics_fetched: count('Politics Agent - Normalise & Filter'),\n  unique_after_dedupe: count('Dedupe & Rank'),\n  new_articles: count('Skip Already-Stored Articles'),\n  relevant_stored: parsed.length,\n  tech_stored: byCat('Technology'), finance_stored: byCat('Finance'), politics_stored: byCat('Politics'),\n  chunks_stored: safe('Chunk Articles (~400 tokens)', a => a.length),\n  errors: errors.length ? [...new Set(errors)].join(' | ').slice(0, 1500) : 'none'\n}}];\n"
+      },
+      "id": "9c7006eb-4438-4710-8748-f58f3f4a8b57",
+      "name": "Build Run Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3088,
+        464
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1VXzVbEIqTK4bME3zMvZfwOTFjFOnGYTb7TWrdInAuJA",
+          "mode": "list",
+          "cachedResultName": "N8N-NewsAPI",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1VXzVbEIqTK4bME3zMvZfwOTFjFOnGYTb7TWrdInAuJA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "RunLog",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "1fdcbde8-c29e-4b05-882d-5887142499ca",
+      "name": "Write Run Log (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3312,
+        464
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8xLnJC6g3cRfLpRp",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Runs only after the Qdrant store succeeded. Lists every article processed this run so it is skipped next time.\nconst storedAt = $now.setZone('Asia/Kolkata').toFormat('yyyy-LL-dd HH:mm');\nconst seen = new Set();\nconst out = [];\nfor (const i of $('Skip Already-Stored Articles').all()) {\n  const url = i.json.url;\n  if (!url || seen.has(url)) continue;\n  seen.add(url);\n  out.push({ json: { url, headline: String(i.json.headline || '').slice(0, 300), category: i.json.category || '', stored_at: storedAt } });\n}\nreturn out;\n"
+      },
+      "id": "36c20da3-a2ee-476e-b9f9-880c9c198df0",
+      "name": "List Stored Articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3088,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "mvTDMJ3qLKnN23it",
+          "mode": "list",
+          "cachedResultName": "stored_articles",
+          "cachedResultUrl": "/projects/w6ulYVG1DTcwZ4dl/datatables/mvTDMJ3qLKnN23it"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "published_at",
+              "displayName": "published_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c9199ac6-e7ba-4bb6-8010-204cd4ecbf47",
+      "name": "Mark Articles Stored",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3312,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const arts = $input.all().map(i => i.json);\nconst block = cat => arts.filter(a => a.category === cat)\n  .sort((a, b) => (b.also_reported_by ? b.also_reported_by.split(',').length : 0) - (a.also_reported_by ? a.also_reported_by.split(',').length : 0))\n  .slice(0, 8)\n  .map((a, i) => `${i + 1}. ${a.headline} (${a.source}, ${a.published_date}) ${a.url}\\n   ${a.summary}`).join('\\n') || 'No new articles today.';\nreturn [{ json: {\n  date: $now.setZone('Asia/Kolkata').toFormat('cccc, dd LLLL yyyy'),\n  technology: block('Technology'), finance: block('Finance'), politics: block('Politics')\n}}];\n"
+      },
+      "id": "3c73e490-08f1-4aec-82f6-57572f444bd8",
+      "name": "Build Briefing Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write \"Today's Briefing\" for {{ $json.date }} as a clean HTML email body (no <html> or <body> tags, inline styles only, no markdown fences).\n\nUse ONLY the articles below. Do not add facts from your own knowledge.\nFor each section (Technology, Finance, Politics): pick the 3-5 most important stories, write one bold headline-style line plus one \"Why it matters\" sentence, and end each item with a link: <a href=\"URL\">Source, date</a>.\nStart with a 3-bullet \"Top of the day\" summary across all domains. If a section has no articles, write \"No new stories today.\"\n\nTECHNOLOGY\n{{ $json.technology }}\n\nFINANCE\n{{ $json.finance }}\n\nPOLITICS\n{{ $json.politics }}"
+      },
+      "id": "0ed2ce6f-7b5a-45d2-a272-66321c9609c8",
+      "name": "Briefing Writer (Claude)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        2768,
+        1168
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "claude-sonnet-5-5"
+        },
+        "options": {
+          "maxTokensToSample": 3000
+        }
+      },
+      "id": "94127070-0b75-4fc6-afd4-aa89f0657d19",
+      "name": "Claude Sonnet - Briefing",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        2768,
+        1360
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "qvJRkD7zwOjocdli",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "vanithasendhilnathan@gmail.com",
+        "subject": "=Today's Briefing - {{ $now.setZone('Asia/Kolkata').toFormat('dd LLL yyyy') }}",
+        "message": "={{ String($json.text).replace(/^```(?:html)?\\s*/i, '').replace(/```\\s*$/, '') }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "fd875523-99c1-473f-a88b-92d8280141ac",
+      "name": "Email Today's Briefing",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3088,
+        1168
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "webhookId": "2e75654b-9612-4961-8146-1d58b8635d80",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YreXmKcpKTucZ8Wy",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily 6 AM Scheduler": {
+      "main": [
+        [
+          {
+            "node": "Tech Agent - Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Tech Agent - NewsAPI",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Finance Agent - Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Finance Agent - NewsAPI",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Politics Agent - Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Politics Agent - NewsAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Agent - Sources": {
+      "main": [
+        [
+          {
+            "node": "Tech Agent - Read RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Agent - Read RSS": {
+      "main": [
+        [
+          {
+            "node": "Tech Agent - Combine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Agent - NewsAPI": {
+      "main": [
+        [
+          {
+            "node": "Tech Agent - Combine",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Finance Agent - Sources": {
+      "main": [
+        [
+          {
+            "node": "Finance Agent - Read RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance Agent - Read RSS": {
+      "main": [
+        [
+          {
+            "node": "Finance Agent - Combine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance Agent - NewsAPI": {
+      "main": [
+        [
+          {
+            "node": "Finance Agent - Combine",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Politics Agent - Sources": {
+      "main": [
+        [
+          {
+            "node": "Politics Agent - Read RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Politics Agent - Read RSS": {
+      "main": [
+        [
+          {
+            "node": "Politics Agent - Combine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Politics Agent - NewsAPI": {
+      "main": [
+        [
+          {
+            "node": "Politics Agent - Combine",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "News Chat (public web chat)": {
+      "main": [
+        [
+          {
+            "node": "RAG Query Engine (AI Agent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Sonnet - Chat": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "RAG Query Engine (AI Agent)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "RAG Query Engine (AI Agent)",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "news_knowledge_base (Qdrant)": {
+      "ai_tool": [
+        [
+          {
+            "node": "RAG Query Engine (AI Agent)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Embeddings (query)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "news_knowledge_base (Qdrant)",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Agent - Combine": {
+      "main": [
+        [
+          {
+            "node": "Tech Agent - Normalise & Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance Agent - Combine": {
+      "main": [
+        [
+          {
+            "node": "Finance Agent - Normalise & Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Politics Agent - Combine": {
+      "main": [
+        [
+          {
+            "node": "Politics Agent - Normalise & Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Agent - Normalise & Filter": {
+      "main": [
+        [
+          {
+            "node": "Merge All Domains",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Domains": {
+      "main": [
+        [
+          {
+            "node": "Dedupe & Rank",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance Agent - Normalise & Filter": {
+      "main": [
+        [
+          {
+            "node": "Merge All Domains",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Politics Agent - Normalise & Filter": {
+      "main": [
+        [
+          {
+            "node": "Merge All Domains",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Dedupe & Rank": {
+      "main": [
+        [
+          {
+            "node": "Skip Already-Stored Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Already-Stored Articles": {
+      "main": [
+        [
+          {
+            "node": "Processing Agent (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processing Agent (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parse & Tag Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku - Processing": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Processing Agent (Claude)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Tag Articles": {
+      "main": [
+        [
+          {
+            "node": "Chunk Articles (~400 tokens)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Briefing Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Articles (~400 tokens)": {
+      "main": [
+        [
+          {
+            "node": "Store in Qdrant (news_kb)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Qdrant (news_kb)": {
+      "main": [
+        [
+          {
+            "node": "Build Run Log",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "List Stored Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Embeddings (store)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Store in Qdrant (news_kb)",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Loader + Metadata": {
+      "ai_document": [
+        [
+          {
+            "node": "Store in Qdrant (news_kb)",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep Chunks Whole": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Document Loader + Metadata",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Run Log": {
+      "main": [
+        [
+          {
+            "node": "Write Run Log (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Stored Articles": {
+      "main": [
+        [
+          {
+            "node": "Mark Articles Stored",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Briefing Input": {
+      "main": [
+        [
+          {
+            "node": "Briefing Writer (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Briefing Writer (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Email Today's Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Sonnet - Briefing": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Briefing Writer (Claude)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6fc2fa9b-a1ce-435a-99c6-a37b4425d805",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3a0802af811f685e6650cd75a03e86bdb7ddbe53df02df261dc6672066ef24d1"
+  },
+  "nodeGroups": [],
+  "id": "jfQp2g6EFxCkbQBY",
+  "tags": []
+}
